@@ -1,6 +1,15 @@
 .venv/
+venv/
 __pycache__/
 *.py[cod]
-books.db
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 .env
+.env.*
 .pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/

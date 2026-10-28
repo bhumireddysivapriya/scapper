@@ -1,16 +1,36 @@
 import logging
-from urllib.parse import urljoin
+import math
+import time
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://books.toscrape.com/catalogue/page-1.html"
 REQUEST_TIMEOUT_SECONDS = 20
+REQUEST_PACING_SECONDS = 0.5
+SOURCE_HOST = "books.toscrape.com"
 
 logger = logging.getLogger(__name__)
 
 
-def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
+def _is_allowed_source_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and hostname == SOURCE_HOST
+        and port in (None, 443)
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
     books: list[dict[str, str | float]] = []
     seen_urls: set[str] = set()
     next_url: str | None = BASE_URL
@@ -19,11 +39,20 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
     while next_url and len(books) < limit and next_url not in visited_pages:
         visited_pages.add(next_url)
         try:
-            response = requests.get(next_url, timeout=REQUEST_TIMEOUT_SECONDS)
+            response = requests.get(
+                next_url,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                allow_redirects=False,
+            )
+            if 300 <= response.status_code < 400:
+                raise requests.RequestException("Unexpected redirect from source site")
             response.raise_for_status()
         except requests.RequestException:
             logger.exception("Request failed while scraping %s", next_url)
             raise
+
+        if not _is_allowed_source_url(response.url):
+            raise requests.RequestException("The source redirected outside its allowed host")
 
         soup = BeautifulSoup(response.content, "html.parser")
 
@@ -37,6 +66,8 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
             availability_tag = item.select_one(".availability")
             # p.star-rating stores the rating in a CSS class (for example, Three).
             rating_tag = item.select_one("p.star-rating")
+            # .image_container img contains the relative book-cover image URL.
+            image_tag = item.select_one(".image_container img")
 
             title = (
                 title_tag.get("title") or title_tag.get_text(strip=True)
@@ -56,8 +87,25 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
             except ValueError:
                 logger.warning("Skipping book %r with an invalid price", title)
                 continue
+            if not math.isfinite(price) or price < 0:
+                logger.warning("Skipping book %r with an invalid price", title)
+                continue
 
-            product_url = urljoin(response.url, href)
+            try:
+                product_url = urljoin(response.url, href)
+            except ValueError:
+                logger.warning("Skipping a book card with a malformed product URL")
+                continue
+            if not _is_allowed_source_url(product_url):
+                logger.warning("Skipping a book card with an unexpected product URL")
+                continue
+            image_href = image_tag.get("src") if image_tag else None
+            try:
+                image_url = urljoin(response.url, image_href) if image_href else None
+            except ValueError:
+                image_url = None
+            if image_url and not _is_allowed_source_url(image_url):
+                image_url = None
             if product_url in seen_urls:
                 continue
             seen_urls.add(product_url)
@@ -79,6 +127,7 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
                     ),
                     "rating": rating,
                     "url": product_url,
+                    "image_url": image_url,
                 }
             )
             if len(books) >= limit:
@@ -86,10 +135,19 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float]]:
 
         # li.next a links to the next catalogue page, if one is available.
         next_tag = soup.select_one("li.next a")
-        next_url = (
-            urljoin(response.url, next_tag.get("href", ""))
-            if next_tag and next_tag.get("href")
-            else None
-        )
+        try:
+            next_url = (
+                urljoin(response.url, next_tag.get("href", ""))
+                if next_tag and next_tag.get("href")
+                else None
+            )
+        except ValueError:
+            logger.warning("Stopping pagination at a malformed next-page URL")
+            next_url = None
+        if next_url and not _is_allowed_source_url(next_url):
+            logger.warning("Stopping pagination at an unexpected next-page URL")
+            next_url = None
+        if next_url and len(books) < limit:
+            time.sleep(REQUEST_PACING_SECONDS)
 
     return books

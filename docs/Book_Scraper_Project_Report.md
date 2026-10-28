@@ -238,7 +238,7 @@ The previous `books` table is not dropped. When it exists, initialization copies
 
 ## 4.1 Technologies and tools
 
-- Python 3 (Render Blueprint configured for Python 3.11.11)
+- Python 3 (Render Blueprint configured for Python 3.10.11)
 - FastAPI 0.115.0 and Uvicorn 0.30.6
 - Requests 2.32.3 and BeautifulSoup 4.12.3
 - SQLAlchemy 2.0.35 and SQLite
@@ -351,7 +351,7 @@ The suite uses pytest, FastAPI `TestClient`, mocked Requests responses, and an i
 
 - Test command: `python -m pytest -q`
 - Observed interpreter: Python 3.14.2 in the development environment
-- Configured deployment interpreter: Python 3.11.11 in `render.yaml`
+- Configured deployment interpreter: Python 3.10.11 in `render.yaml`
 - Local test output includes a third-party warning that LangSmith's Pydantic V1 compatibility is not supported on Python 3.14; it did not fail this project's tests.
 
 ## 5.3 Test cases and results
@@ -391,7 +391,7 @@ The screenshots below were captured from the locally running application after i
 ## 5.5 Known issues and limitations
 
 - Automated tests validate behavior using mocks; they do not prove the live site's current HTML remains unchanged.
-- Python 3.11.11 is the configured deployment runtime; the available local test interpreter was Python 3.14.2.
+- Python 3.10.11 is the configured deployment runtime; the available local test interpreter was Python 3.14.2.
 - SQLite persistence on Render's free local filesystem is not guaranteed across restarts or redeployments.
 - The scrape lock and cooldown coordinate only within one running process.
 - Dashboard pagination uses offset-based API requests and shows ten records per page; a search or filter resets pagination to the first page.
@@ -420,7 +420,7 @@ The checked-in `render.yaml` defines a Python web service using:
 
 - Build command: `pip install -r requirements.txt`
 - Start command: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- Runtime: Python 3.11.11
+- Runtime: Python 3.10.11
 - Plan: Free
 
 The module path and ASGI variable correspond to `app/main.py` and its `app = FastAPI(...)` instance. To deploy, connect the GitHub repository to Render or use the Blueprint flow, review the service settings, and initiate the deployment. Deployment was not executed in this task.

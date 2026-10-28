@@ -44,7 +44,7 @@ book-scraper-assignment/
 
 ## Run locally
 
-Requires Python 3.11 or newer.
+Requires Python 3.10 or newer.
 
 ### Windows PowerShell
 
@@ -168,7 +168,7 @@ If using a different GitHub repository, create it first and set its URL as the `
 
 | Setting | Value |
 |---|---|
-| Runtime | Python 3.11 |
+| Runtime | Python 3.10 |
 | Build command | `pip install -r requirements.txt` |
 | Start command | `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | Instance type | Free |

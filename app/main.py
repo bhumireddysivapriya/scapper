@@ -66,7 +66,6 @@ def home() -> str:
             border-radius: 10px; color: #fff; background: #286343; font-size: 19px;
           }
           .brand-name { font-size: 15px; font-weight: 750; line-height: 1.15; }
-          .brand-caption { margin-top: 3px; color: #748078; font-size: 11px; }
           .side-nav { display: grid; gap: 5px; padding-top: 16px; }
           .side-nav a {
             display: flex; align-items: center; gap: 11px; padding: 10px 11px;
@@ -110,19 +109,10 @@ def home() -> str:
             border-radius: 50%; color: #fff; background: #286343; font-weight: 750;
           }
           main { width: 100%; max-width: 1500px; margin: 0 auto; padding: 26px 28px 34px; }
-          .heading {
-            display: flex; justify-content: space-between; align-items: end;
-            gap: 20px; min-height: 105px; margin-bottom: 17px;
-            padding: 8px 10px; background:
-              radial-gradient(ellipse at 76% 75%, #dceee2 0 12%, transparent 12.5%),
-              radial-gradient(ellipse at 88% 55%, #e8f3e9 0 16%, transparent 16.5%);
+          .dashboard-title {
+            margin: 0 0 16px; font-size: clamp(24px, 3vw, 32px);
+            letter-spacing: -.03em;
           }
-          .eyebrow {
-            margin: 0 0 8px; color: #43805b; font-size: 12px;
-            font-weight: 750; letter-spacing: .12em; text-transform: uppercase;
-          }
-          h1 { margin: 0; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.04em; }
-          .subtitle { margin: 9px 0 0; color: #748078; }
           button, input {
             min-height: 42px; border-radius: 9px; font: inherit;
           }
@@ -274,8 +264,6 @@ def home() -> str:
             .global-search { width: min(330px, 60%); }
             .top-link { display: none; }
             main { padding: 18px 14px 25px; }
-            .heading { min-height: auto; align-items: flex-start; flex-direction: column; padding: 4px 2px 10px; }
-            .heading .subtitle { max-width: 500px; line-height: 1.5; }
             .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
             .card { min-height: 90px; padding: 13px 9px 10px 46px; }
             .card-icon { top: 12px; left: 8px; width: 30px; height: 30px; }
@@ -301,7 +289,7 @@ def home() -> str:
           <aside class="sidebar">
             <a class="sidebar-brand" href="/" aria-label="BookShelf home">
               <span class="brand-mark" aria-hidden="true">▮▮</span>
-              <span><span class="brand-name">BookShelf</span><span class="brand-caption">Books to Scrape</span></span>
+              <span class="brand-name">BookShelf</span>
             </a>
             <nav class="side-nav" aria-label="Main navigation">
               <a class="active" href="#dashboard"><span class="side-icon" aria-hidden="true">⌂</span>Dashboard</a>
@@ -330,14 +318,7 @@ def home() -> str:
             </div>
           </header>
           <main id="dashboard">
-            <section class="heading">
-              <div>
-                <p class="eyebrow">Books to Scrape · Library</p>
-                <h1>Book dashboard</h1>
-                <p class="subtitle">Browse, search, and filter your collected book data. Summary cards cover the full collection.</p>
-              </div>
-              <button id="scrape-button" type="button">↻ &nbsp; Scrape latest books</button>
-            </section>
+            <h1 class="dashboard-title">Dashboard</h1>
             <section class="cards" id="analytics" aria-label="Collection statistics" aria-live="polite">
               <article class="card">
                 <span class="card-icon" aria-hidden="true">▤</span>
@@ -420,6 +401,7 @@ def home() -> str:
               <div class="table-head" aria-live="polite">
                 <strong><span aria-hidden="true">▮▮ &nbsp;</span>Scraped books</strong>
                 <div class="table-actions">
+                  <button class="scrape-button" id="scrape-button" type="button">↻ &nbsp; Scrape latest books</button>
                   <span id="result-label">Loading books…</span>
                   <a class="download-button" id="download-csv" href="/products/export.csv" download>
                     ↓ &nbsp; Download CSV

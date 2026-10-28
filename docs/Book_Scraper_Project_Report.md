@@ -419,7 +419,7 @@ The project currently uses the repository name `scapper`; create a separate repo
 The checked-in `render.yaml` defines a Python web service using:
 
 - Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Start command: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Runtime: Python 3.11.11
 - Plan: Free
 

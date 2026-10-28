@@ -56,6 +56,14 @@ def test_home_and_health(client):
     home = client.get("/")
     assert home.status_code == 200
     assert 'href="#books"' in home.text
+    assert ">Books</a>" not in home.text
+    assert ">Analytics</a>" not in home.text
+    assert ">Settings</a>" not in home.text
+    assert "brand-caption" not in home.text
+    assert 'href="/docs"' in home.text
+    assert 'href="/books"' in home.text
+    assert '<h1 class="dashboard-title">Dashboard</h1>' in home.text
+    assert '<button class="scrape-button" id="scrape-button"' in home.text
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "connected"}

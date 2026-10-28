@@ -170,10 +170,12 @@ If using a different GitHub repository, create it first and set its URL as the `
 |---|---|
 | Runtime | Python 3.11 |
 | Build command | `pip install -r requirements.txt` |
-| Start command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Start command | `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | Instance type | Free |
 
 3. Deploy, then open `https://<your-service-name>.onrender.com/` for the dashboard or `/docs` for the API.
+
+If the shell reports `gunicorn: command not found`, replace any `gunicorn` Start Command in the Render service settings with `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`. Uvicorn is installed by `requirements.txt`; this project does not use Gunicorn.
 
 **Storage note:** `DATABASE_URL` can select a SQLite database location; by default the app uses `sqlite:///./books.db`. For example, with a persistent disk mounted at `/var/data`, set `DATABASE_URL=sqlite:////var/data/books.db`. Render's free filesystem is ephemeral, so SQLite data can be lost on restart or redeploy. Configure supported persistent storage and point `DATABASE_URL` at that disk if persistence is required. Deployment has not been performed or verified as part of this project update.
 

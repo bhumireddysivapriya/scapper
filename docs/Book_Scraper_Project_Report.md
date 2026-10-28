@@ -1,6 +1,6 @@
 # 1. Title Page
 
-**Project Title:** Automated Product Data Scraping and Search System Using Python, FastAPI, SQLite, GitHub, and Render
+**Project Title:** Automated Product Data Scraping and Search System Using Python, FastAPI, SQLite/PostgreSQL, GitHub, and Render
 
 **Submitted by:** Sai Patel  
 **Roll Number:** To be filled in  
@@ -36,9 +36,9 @@ I would like to acknowledge the maintainers of Books to Scrape for providing a p
 
 The Automated Product Data Scraping and Search System is an educational application that collects publicly accessible book catalogue information from Books to Scrape. The scraper uses Requests to fetch the site's catalogue pages, follows the catalogue's next-page links up to a requested limit, and uses BeautifulSoup to extract each valid book's title, GBP price, rating, stock availability, and product URL. It uses a timeout, brief pacing between page requests, and an HTTPS host allowlist. Cards with invalid or missing essential fields are skipped.
 
-FastAPI exposes a JSON REST API and a browser dashboard. SQLAlchemy stores products in a local SQLite `products` table. Product URLs are unique, and SQLite conflict handling reports how many records were collected, inserted, or skipped. The API supports paginated retrieval, title search, price-range filtering, availability filtering, individual product lookup, and a database health check. Earlier assignment clients remain supported through the unpaginated `/books` route. On startup, existing rows in the previous `books` table are copied into `products` without deleting the original table.
+FastAPI exposes a JSON REST API and a browser dashboard. SQLAlchemy stores products in a local SQLite `products` table by default, or in PostgreSQL when `DATABASE_URL` is configured. Product URLs are unique, and database-specific conflict handling reports how many records were collected, inserted, or skipped. The API supports paginated retrieval, title search, price-range filtering, availability filtering, individual product lookup, and a database health check. Earlier assignment clients remain supported through the unpaginated `/books` route. On startup, existing rows in the previous `books` table are copied into `products` without deleting the original table.
 
-The responsive Bookshelf-style dashboard presents collection-wide total, top-rating, average/minimum/maximum price, and in-stock/out-of-stock/unknown availability summaries. It includes global and form-based search, combined filters, cover thumbnails, rating stars, and ten-row pagination. Automated tests use mocked HTTP responses and an isolated in-memory SQLite database rather than relying on the live source site. The project includes a Render Blueprint configuration and Git instructions. Render deployment was not performed as part of this verification; SQLite data on a free Render filesystem is not guaranteed to persist across restarts or redeployments.
+The responsive Bookshelf-style dashboard presents collection-wide total, top-rating, average/minimum/maximum price, and in-stock/out-of-stock/unknown availability summaries. It includes global and form-based search, combined filters, cover thumbnails, rating stars, and ten-row pagination. Automated tests use mocked HTTP responses and an isolated in-memory SQLite database rather than relying on the live source site. The project includes a Render Blueprint configuration and Git instructions. Render deployment was not performed as part of this verification; production persistence requires a configured PostgreSQL database because Render's service filesystem is temporary.
 
 ---
 
@@ -83,7 +83,7 @@ Manually reviewing book records across catalogue pages is slow, and raw catalogu
 
 ## 1.4 Scope and limitations
 
-The scraper uses the catalogue listing pages and follows their pagination. It is not a general-purpose crawler and accepts no user-supplied scrape URL. The application does not access login-protected content, defeat access controls, or scrape sites other than the stated practice website. Scraping is initiated manually through the API or dashboard; there is no scheduler. The in-process scrape lock and cooldown do not coordinate across multiple application workers. Render's free local filesystem is ephemeral, so the default SQLite file is suitable for a demonstration but is not durable hosting storage.
+The scraper uses the catalogue listing pages and follows their pagination. It is not a general-purpose crawler and accepts no user-supplied scrape URL. The application does not access login-protected content, defeat access controls, or scrape sites other than the stated practice website. Scraping is initiated manually through the API or dashboard; there is no scheduler. The in-process scrape lock and cooldown do not coordinate across multiple application workers. Render's free local filesystem is ephemeral, so production must use the configured PostgreSQL service rather than the local SQLite default.
 
 ---
 
@@ -238,10 +238,10 @@ The previous `books` table is not dropped. When it exists, initialization copies
 
 ## 4.1 Technologies and tools
 
-- Python 3 (Render Blueprint configured for Python 3.10.11)
+- Python 3.11.11 (Render Blueprint configured for this version)
 - FastAPI 0.115.0 and Uvicorn 0.30.6
 - Requests 2.32.3 and BeautifulSoup 4.12.3
-- SQLAlchemy 2.0.35 and SQLite
+- SQLAlchemy 2.0.35, SQLite for local development, PostgreSQL via psycopg for production
 - Pydantic response models, pytest 8.3.3, and HTTPX 0.27.2 for tests
 - Git/GitHub and Render configuration
 
@@ -300,14 +300,12 @@ The scraper waits 0.5 seconds between catalogue page requests. It does not expos
 
 ## 4.4 Database implementation
 
-`app/database.py` creates the SQLAlchemy engine and session factory, and `get_db` yields a request-scoped session that is closed after the request. `initialize_database` creates the canonical table and copies legacy book rows without removing the old table. Product insertion uses SQLite's conflict handling on the unique URL constraint:
+`app/database.py` creates the SQLAlchemy engine and session factory, and `get_db` yields a request-scoped session that is closed after the request. `DATABASE_URL` selects SQLite or PostgreSQL; SQLite is the local default, and PostgreSQL URLs are normalized to use psycopg. `initialize_database` creates the canonical table and copies legacy book rows without removing the old table. Scrape insertion uses each dialect's `ON CONFLICT` behavior on the unique URL constraint and refreshes a missing cover URL when available.
 
 ```python
-statement = sqlite_insert(Product).values(records).on_conflict_do_nothing(
-    index_elements=[Product.url]
-)
-result = db.execute(statement)
-inserted = result.rowcount or 0
+statement = _product_upsert_statement(db.get_bind().dialect.name, records)
+db.execute(statement)
+db.commit()
 db.commit()
 ```
 
@@ -351,7 +349,7 @@ The suite uses pytest, FastAPI `TestClient`, mocked Requests responses, and an i
 
 - Test command: `python -m pytest -q`
 - Observed interpreter: Python 3.14.2 in the development environment
-- Configured deployment interpreter: Python 3.10.11 in `render.yaml`
+- Configured deployment interpreter: Python 3.11.11 in `.python-version` and `render.yaml`
 - Local test output includes a third-party warning that LangSmith's Pydantic V1 compatibility is not supported on Python 3.14; it did not fail this project's tests.
 
 ## 5.3 Test cases and results
@@ -367,10 +365,12 @@ The suite uses pytest, FastAPI `TestClient`, mocked Requests responses, and an i
 | Invalid API parameters | Return `422` | Passed |
 | Scrape cooldown | Recent scrape returns `429` and `Retry-After` | Passed |
 | SQLite URL uniqueness and schema migrations | Product URL remains unique; legacy data is copied, old table remains, existing product tables gain the cover column | Passed |
+| Database URL normalization and PostgreSQL upsert compilation | SQLite and Render PostgreSQL URLs are supported; PostgreSQL conflict SQL compiles | Passed |
+| File-backed SQLite persistence across reconnect | Saved test row is readable from a new engine connection | Passed; this does not imply Render filesystem persistence |
 | Scraper parsing and pagination | Fields and product links are extracted; next page is followed with pacing | Passed |
 | Invalid/missing fields and malformed HTML | Invalid cards are skipped; optional fields use `Unknown`; malformed page gives no fabricated rows | Passed |
 | Unexpected product host and network timeout | External product is skipped; timeout is propagated to API error handling | Passed |
-| Full automated suite | All tests pass | Passed (`28 passed`; latest run) |
+| Full automated suite | All tests pass | Passed (`33 passed` in this verification) |
 | Dashboard statistics | Total, price summary, top rating, and stock classifications match seeded records | Passed |
 | Browser dashboard check | Dashboard rendered from local DB data with product covers | Passed; 10 rows per page, cover images loaded |
 | Browser dashboard KPI and filter check | KPI values match `/dashboard/stats`; availability filtering updates the table without changing full-collection summaries | Passed |
@@ -391,8 +391,9 @@ The screenshots below were captured from the locally running application after i
 ## 5.5 Known issues and limitations
 
 - Automated tests validate behavior using mocks; they do not prove the live site's current HTML remains unchanged.
-- Python 3.10.11 is the configured deployment runtime; the available local test interpreter was Python 3.14.2.
-- SQLite persistence on Render's free local filesystem is not guaranteed across restarts or redeployments.
+- Python 3.11.11 is the configured deployment runtime; the available local test interpreter was Python 3.14.2.
+- Production durability requires setting `DATABASE_URL` to a PostgreSQL service; no live Render environment was inspected or deployed during this task.
+- Render PostgreSQL free-plan availability and retention limits can change; confirm current plan terms and use backups for long-term data retention.
 - The scrape lock and cooldown coordinate only within one running process.
 - Dashboard pagination uses offset-based API requests and shows ten records per page; a search or filter resets pagination to the first page.
 - Deployment and GitHub push of these latest changes have not been performed or verified in this report.
@@ -420,20 +421,20 @@ The checked-in `render.yaml` defines a Python web service using:
 
 - Build command: `pip install -r requirements.txt`
 - Start command: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- Runtime: Python 3.10.11
+- Runtime: Python 3.11.11
 - Plan: Free
 
 The module path and ASGI variable correspond to `app/main.py` and its `app = FastAPI(...)` instance. To deploy, connect the GitHub repository to Render or use the Blueprint flow, review the service settings, and initiate the deployment. Deployment was not executed in this task.
 
 ## 6.3 Database persistence
 
-By default, the application stores `books.db` in its working directory. `DATABASE_URL` can be set to another SQLAlchemy SQLite URL, for example `sqlite:////var/data/books.db` when a persistent disk is mounted at `/var/data`. Render's free local filesystem may be reset, and free service plans do not imply durable SQLite storage. Configure an available persistent storage option and verify it before relying on records surviving restarts.
+By default, the application stores `books.db` in its working directory for local development. Render's service filesystem is temporary, so its default SQLite file can be empty after a restart or redeploy. The Blueprint declares a PostgreSQL database and connects it to the web service through `DATABASE_URL`. For an existing manually configured web service, attach or create a PostgreSQL database and set `DATABASE_URL` to its Internal Database URL in the Render dashboard. The application converts Render's standard PostgreSQL URL scheme to psycopg and logs only the database dialect, never credentials. The Render PostgreSQL free plan may have lifecycle or storage limits; verify current terms and backups before relying on long-term retention. The live Render settings and database connection were not available for verification in this report.
 
 ---
 
 # 12. Chapter 7: Conclusion and Future Scope
 
-The project now provides an end-to-end educational example for collecting public book catalogue data, storing it in SQLite, and exposing it through a dashboard and REST API. It builds on the original app instead of discarding it: the existing dashboard and `/books` response remain available, and existing records are copied into the new canonical `products` table. The dashboard adds book covers, summary cards, search, filters, and pagination. Mocked tests verify the core scraper, database migration, API filters, pagination, errors, and duplicate handling.
+The project now provides an end-to-end educational example for collecting public book catalogue data, storing it in SQLite locally or PostgreSQL when configured, and exposing it through a dashboard and REST API. It builds on the original app instead of discarding it: the existing dashboard and `/books` response remain available, and existing records are copied into the new canonical `products` table. The dashboard adds book covers, summary cards, search, filters, and pagination. Mocked tests verify the core scraper, database migration, API filters, pagination, errors, and duplicate handling.
 
 Future work could add scheduled scraping with administrator controls, persistent production storage, deployment smoke tests, authentication for public write operations, and cross-worker rate limiting. Any expansion should continue respecting the practice site's published usage rules and avoid login-protected targets or access-control bypasses.
 

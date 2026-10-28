@@ -3,14 +3,17 @@ from io import StringIO
 import logging
 import threading
 import time
+from typing import Any
 
 import requests
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import Select, case, func, select, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.dml import Insert
 
 from app.database import get_db, initialize_database
 from app.models import Product
@@ -18,7 +21,11 @@ from app.schemas import DashboardStats, ProductPage, ProductResponse
 from app.scraper import scrape_books
 
 logger = logging.getLogger(__name__)
-initialize_database()
+try:
+    initialize_database()
+except SQLAlchemyError:
+    logger.exception("Application database initialization failed")
+    raise
 
 SCRAPE_COOLDOWN_SECONDS = 30
 _scrape_lock = threading.Lock()
@@ -29,6 +36,23 @@ app = FastAPI(
     description="Scrapes public book data from a practice website and provides a REST API.",
     version="1.0.0",
 )
+
+
+def _product_upsert_statement(
+    dialect_name: str,
+    records: list[dict[str, Any]],
+) -> Insert:
+    if dialect_name == "sqlite":
+        statement = sqlite_insert(Product).values(records)
+    elif dialect_name == "postgresql":
+        statement = postgresql_insert(Product).values(records)
+    else:
+        raise RuntimeError(f"Product persistence is unsupported for {dialect_name}")
+    return statement.on_conflict_do_update(
+        index_elements=[Product.url],
+        set_={"image_url": statement.excluded.image_url},
+        where=statement.excluded.image_url.is_not(None),
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -717,13 +741,11 @@ def run_scraper(
                         )
                     ).all()
                 )
-                statement = sqlite_insert(Product).values(records)
-                statement = statement.on_conflict_do_update(
-                    index_elements=[Product.url],
-                    set_={"image_url": statement.excluded.image_url},
-                    where=statement.excluded.image_url.is_not(None),
+                statement = _product_upsert_statement(
+                    db.get_bind().dialect.name,
+                    records,
                 )
-                result = db.execute(statement)
+                db.execute(statement)
                 inserted = len({record["url"] for record in records} - existing_urls)
                 db.commit()
             else:
@@ -736,6 +758,13 @@ def run_scraper(
                 detail="Scraped products could not be saved",
             ) from exc
 
+        logger.info(
+            "Scrape completed collected=%d inserted=%d skipped=%d database=%s",
+            len(books),
+            inserted,
+            len(books) - inserted,
+            db.get_bind().dialect.name,
+        )
         return {
             "message": f"Collected {len(books)} products; saved {inserted}",
             "products_collected": len(books),

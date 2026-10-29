@@ -67,10 +67,11 @@ def test_home_and_health(client):
     assert 'id="scraping-history"' not in home.text
     assert "Recent scraping activity" not in home.text
     assert 'id="refresh-button"' in home.text
+    assert 'id="scrape-button"' in home.text
+    assert 'id="scrape-status"' in home.text
     assert 'id="average-rating"' in home.text
     assert 'class="highlight-table"' in home.text
     assert '<h1 class="dashboard-title">Book Analytics</h1>' in home.text
-    assert 'id="scrape-button"' not in home.text
     assert 'id="scrape-all-button"' not in home.text
     assert 'id="scrape-contemporary-button"' not in home.text
     assert 'id="category-chart"' not in home.text

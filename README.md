@@ -94,7 +94,7 @@ The application has four main steps:
 - **Average Rating** shows the mean of available one-to-five star ratings. The highest-rated-books table shows the top five titles and the rating, price, and availability for each.
 - **Average price**, **Lowest price**, and **Highest price** summarize prices across the full collection in GBP.
 - The rating and price charts summarize the saved collection.
-- Use **Refresh Data** to reload the dashboard summaries and charts.
+- Use **Scrape Books** to collect and save a batch of 20 books; the dashboard shows scrape progress and reloads its summaries and charts when the job finishes. Use **Refresh Data** to reload the current saved collection without scraping.
 - Book browsing, filtering, CSV exports, scraping, and scrape history are available in Swagger UI at `/docs`.
 - Books to Scrape has no sales figures, so actual sales-ranked best-sellers cannot be identified; the highest-rated-books panel is explicitly a ratings-based popularity proxy. The low-price panel displays the most affordable books.
 
@@ -150,7 +150,7 @@ For example, `GET /products?search=light&min_price=10&max_price=60&availability=
 
 ### End-to-end scrape and analytics flow
 
-The dashboard is an analytics view; use Swagger UI (`/docs`) or the API below to collect and browse books:
+The dashboard can collect an initial batch with **Scrape Books**. For a full catalogue, use Swagger UI (`/docs`) or the API below:
 
 1. Start the server and open `/docs`.
 2. Execute `POST /api/scrape/contemporary` to collect the Contemporary category, or `POST /api/scrape?limit=1000` to collect the full catalogue. The response includes a `job_id`.

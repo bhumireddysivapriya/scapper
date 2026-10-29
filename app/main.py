@@ -106,6 +106,8 @@ def home() -> str:
           .last-updated { display: flex; align-items: center; gap: 9px; color: #62736a; font-size: 11px; }
           .last-updated strong { display: block; margin-top: 3px; color: #27382f; font-size: 11px; font-weight: 550; }
           .refresh-button { min-height: 36px; border-radius: 9px; background: #1d7b4a; font-size: 11px; }
+          .scrape-button { min-height: 36px; border-radius: 9px; font-size: 11px; }
+          .scrape-status { margin: 0 0 12px; color: #355542; font-size: 12px; }
           .top-link { color: #66746b; font-size: 12px; text-decoration: none; }
           .profile {
             display: flex; align-items: center; gap: 8px; color: #506056;
@@ -307,7 +309,8 @@ def home() -> str:
             .field.search { grid-column: span 2; }
           }
           @media (max-width: 760px) {
-            .topbar { position: static; min-height: 64px; padding: 10px 14px; }
+            .topbar { position: static; min-height: 64px; padding: 10px 14px; flex-wrap: wrap; }
+            .top-actions { justify-content: flex-end; width: 100%; gap: 8px; }
             .last-updated { display: none; }
             main { padding: 18px 14px 25px; }
             .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -345,10 +348,12 @@ def home() -> str:
             </div>
             <div class="top-actions">
               <div class="last-updated"><span aria-hidden="true">▦</span><span>Last updated<strong id="last-updated">—</strong></span></div>
+              <button class="scrape-button" id="scrape-button" type="button">Scrape Books</button>
               <button class="refresh-button" id="refresh-button" type="button">↻ &nbsp; Refresh Data</button>
             </div>
           </header>
           <main id="dashboard">
+            <p class="scrape-status" id="scrape-status" role="status" aria-live="polite" hidden></p>
             <section class="cards" id="analytics" aria-label="Collection statistics" aria-live="polite">
               <article class="card">
                 <span class="card-icon" aria-hidden="true">▤</span>
@@ -428,6 +433,7 @@ def home() -> str:
         </div>
         <script>
           const errorMessage = document.getElementById("error-message");
+          const scrapeStatus = document.getElementById("scrape-status");
 
           function formatPrice(price) {
             return price === null || price === undefined || !Number.isFinite(Number(price))
@@ -681,13 +687,59 @@ def home() -> str:
               renderAnalytics(analytics, stats.total_books);
               document.getElementById("last-updated").textContent =
                 new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+              return true;
             } catch (error) {
               errorMessage.textContent = error instanceof Error ? error.message : "Could not load dashboard data.";
               errorMessage.hidden = false;
+              return false;
+            }
+          }
+
+          async function scrapeBooks() {
+            const button = document.getElementById("scrape-button");
+            button.disabled = true;
+            scrapeStatus.hidden = false;
+            scrapeStatus.textContent = "Scraping books from the source site...";
+            errorMessage.hidden = true;
+
+            try {
+              const startResponse = await fetch("/api/scrape?limit=20", { method: "POST" });
+              if (!startResponse.ok) {
+                throw new Error("Could not start a scrape. Please try again shortly.");
+              }
+              const { job_id: jobId } = await startResponse.json();
+              if (!Number.isInteger(jobId)) {
+                throw new Error("The scrape job could not be started.");
+              }
+
+              let job;
+              do {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                const statusResponse = await fetch(`/api/scrape/status/${jobId}`);
+                if (!statusResponse.ok) {
+                  throw new Error("Could not check the scrape status. Please refresh and try again.");
+                }
+                job = await statusResponse.json();
+              } while (job.status === "queued" || job.status === "running");
+
+              if (job.status === "failed") {
+                throw new Error(job.error_message || "The scrape failed. Please try again.");
+              }
+              if (!await loadDashboard()) {
+                throw new Error("The scrape finished, but dashboard data could not be refreshed.");
+              }
+              scrapeStatus.textContent = `Scrape ${job.status}: ${job.total_books} books processed. Dashboard updated.`;
+            } catch (error) {
+              errorMessage.textContent = error instanceof Error ? error.message : "Could not scrape books.";
+              errorMessage.hidden = false;
+              scrapeStatus.textContent = "Books could not be loaded.";
+            } finally {
+              button.disabled = false;
             }
           }
 
           document.getElementById("refresh-button").addEventListener("click", loadDashboard);
+          document.getElementById("scrape-button").addEventListener("click", scrapeBooks);
           loadDashboard();
         </script>
       </body>

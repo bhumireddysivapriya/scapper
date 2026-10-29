@@ -2,16 +2,27 @@ import logging
 import math
 import time
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://books.toscrape.com/catalogue/page-1.html"
+CONTEMPORARY_URL = (
+    "https://books.toscrape.com/catalogue/category/books/contemporary_38/index.html"
+)
 REQUEST_TIMEOUT_SECONDS = 20
 REQUEST_PACING_SECONDS = 0.5
+REQUEST_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 0.5
 SOURCE_HOST = "books.toscrape.com"
+USER_AGENT = "BookShelfScraper/1.0"
 
 logger = logging.getLogger(__name__)
+
+
+class SourceAccessError(requests.RequestException):
+    pass
 
 
 def _is_allowed_source_url(url: str) -> bool:
@@ -30,43 +41,116 @@ def _is_allowed_source_url(url: str) -> bool:
     )
 
 
-def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
-    books: list[dict[str, str | float]] = []
+def _request(
+    url: str,
+    last_request: list[float | None],
+    *,
+    allow_not_found: bool = False,
+) -> requests.Response:
+    if not _is_allowed_source_url(url):
+        raise SourceAccessError("Refusing to request a URL outside the source site")
+
+    for attempt in range(REQUEST_RETRIES):
+        if last_request[0] is not None:
+            elapsed = time.monotonic() - last_request[0]
+            if elapsed < REQUEST_PACING_SECONDS:
+                time.sleep(REQUEST_PACING_SECONDS - elapsed)
+        try:
+            response = requests.get(
+                url,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                allow_redirects=False,
+                headers={"User-Agent": USER_AGENT},
+            )
+            last_request[0] = time.monotonic()
+            if 300 <= response.status_code < 400:
+                raise SourceAccessError("Unexpected redirect from source site")
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt + 1 < REQUEST_RETRIES:
+                    time.sleep(RETRY_BACKOFF_SECONDS * (2**attempt))
+                    continue
+            if allow_not_found and response.status_code == 404:
+                return response
+            response.raise_for_status()
+            if not _is_allowed_source_url(response.url):
+                raise SourceAccessError(
+                    "The source redirected outside its allowed host"
+                )
+            return response
+        except SourceAccessError:
+            raise
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response else 0
+            if status_code != 429 and status_code < 500:
+                raise
+            if attempt + 1 == REQUEST_RETRIES:
+                logger.exception("Request failed while scraping %s", url)
+                raise
+            time.sleep(RETRY_BACKOFF_SECONDS * (2**attempt))
+        except requests.RequestException:
+            if attempt + 1 == REQUEST_RETRIES:
+                logger.exception("Request failed while scraping %s", url)
+                raise
+            time.sleep(RETRY_BACKOFF_SECONDS * (2**attempt))
+    raise requests.RequestException("Source request retries were exhausted")
+
+
+def _load_robots(last_request: list[float | None]) -> RobotFileParser | None:
+    robots_url = f"https://{SOURCE_HOST}/robots.txt"
+    response = _request(robots_url, last_request, allow_not_found=True)
+    if response.status_code == 404:
+        return None
+    parser = RobotFileParser(robots_url)
+    parser.parse(response.text.splitlines())
+    return parser
+
+
+def _extract_details(html: bytes) -> tuple[str | None, str | None]:
+    soup = BeautifulSoup(html, "html.parser")
+    category_links = soup.select("ul.breadcrumb li a")
+    category = (
+        category_links[-1].get_text(" ", strip=True)
+        if category_links
+        else None
+    )
+    description_heading = soup.select_one("#product_description")
+    description_tag = (
+        description_heading.find_next("p") if description_heading else None
+    )
+    description = (
+        description_tag.get_text(" ", strip=True) if description_tag else None
+    )
+    return category, description
+
+
+def scrape_books(
+    limit: int = 20,
+    *,
+    start_url: str = BASE_URL,
+) -> list[dict[str, str | float | None]]:
+    if not _is_allowed_source_url(start_url):
+        raise SourceAccessError("Refusing to scrape a URL outside the source site")
+
+    books: list[dict[str, str | float | None]] = []
     seen_urls: set[str] = set()
-    next_url: str | None = BASE_URL
+    next_url: str | None = start_url
     visited_pages: set[str] = set()
+    last_request: list[float | None] = [None]
+    robots = _load_robots(last_request)
+
+    if robots and not robots.can_fetch(USER_AGENT, start_url):
+        raise SourceAccessError("robots.txt disallows scraping the catalogue")
 
     while next_url and len(books) < limit and next_url not in visited_pages:
         visited_pages.add(next_url)
-        try:
-            response = requests.get(
-                next_url,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-                allow_redirects=False,
-            )
-            if 300 <= response.status_code < 400:
-                raise requests.RequestException("Unexpected redirect from source site")
-            response.raise_for_status()
-        except requests.RequestException:
-            logger.exception("Request failed while scraping %s", next_url)
-            raise
-
-        if not _is_allowed_source_url(response.url):
-            raise requests.RequestException("The source redirected outside its allowed host")
-
+        response = _request(next_url, last_request)
         soup = BeautifulSoup(response.content, "html.parser")
 
-        # Each article.product_pod element represents one book card.
         for item in soup.select("article.product_pod"):
-            # h3 a contains the title and relative product URL.
             title_tag = item.select_one("h3 a")
-            # .price_color contains the displayed GBP price.
             price_tag = item.select_one(".price_color")
-            # .availability contains the stock status.
             availability_tag = item.select_one(".availability")
-            # p.star-rating stores the rating in a CSS class (for example, Three).
             rating_tag = item.select_one("p.star-rating")
-            # .image_container img contains the relative book-cover image URL.
             image_tag = item.select_one(".image_container img")
 
             title = (
@@ -99,6 +183,10 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
             if not _is_allowed_source_url(product_url):
                 logger.warning("Skipping a book card with an unexpected product URL")
                 continue
+            if product_url in seen_urls:
+                continue
+            seen_urls.add(product_url)
+
             image_href = image_tag.get("src") if image_tag else None
             try:
                 image_url = urljoin(response.url, image_href) if image_href else None
@@ -106,15 +194,23 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
                 image_url = None
             if image_url and not _is_allowed_source_url(image_url):
                 image_url = None
-            if product_url in seen_urls:
-                continue
-            seen_urls.add(product_url)
 
             rating_classes = rating_tag.get("class", []) if rating_tag else []
             rating = next(
                 (value for value in rating_classes if value != "star-rating"),
                 "Unknown",
             )
+
+            category = None
+            description = None
+            detail_failed = False
+            if not robots or robots.can_fetch(USER_AGENT, product_url):
+                try:
+                    detail_response = _request(product_url, last_request)
+                    category, description = _extract_details(detail_response.content)
+                except requests.RequestException:
+                    detail_failed = True
+                    logger.warning("Could not retrieve details for %s", product_url)
 
             books.append(
                 {
@@ -128,12 +224,14 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
                     "rating": rating,
                     "url": product_url,
                     "image_url": image_url,
+                    "category": category,
+                    "description": description,
+                    "detail_failed": detail_failed,
                 }
             )
             if len(books) >= limit:
                 break
 
-        # li.next a links to the next catalogue page, if one is available.
         next_tag = soup.select_one("li.next a")
         try:
             next_url = (
@@ -147,7 +245,8 @@ def scrape_books(limit: int = 20) -> list[dict[str, str | float | None]]:
         if next_url and not _is_allowed_source_url(next_url):
             logger.warning("Stopping pagination at an unexpected next-page URL")
             next_url = None
-        if next_url and len(books) < limit:
-            time.sleep(REQUEST_PACING_SECONDS)
+        if next_url and robots and not robots.can_fetch(USER_AGENT, next_url):
+            logger.warning("Stopping pagination because robots.txt disallows %s", next_url)
+            next_url = None
 
     return books

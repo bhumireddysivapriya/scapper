@@ -103,6 +103,9 @@ def test_initialization_adds_cover_column_to_existing_products_table():
         assert existing.image_url is None
 
     assert "image_url" in {column["name"] for column in inspect(engine).get_columns("products")}
+    columns = {column["name"] for column in inspect(engine).get_columns("products")}
+    assert {"category", "description", "source", "created_at", "updated_at", "last_scraped_at"} <= columns
+    assert {"scrape_jobs", "price_history"} <= set(inspect(engine).get_table_names())
     engine.dispose()
 
 

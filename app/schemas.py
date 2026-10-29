@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -11,6 +13,12 @@ class ProductResponse(BaseModel):
     rating: str
     url: str
     image_url: str | None = None
+    category: str | None = None
+    description: str | None = None
+    source: str = "books.toscrape.com"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    last_scraped_at: datetime | None = None
 
 
 class ProductPage(BaseModel):
@@ -25,9 +33,29 @@ class DashboardStats(BaseModel):
     in_stock: int
     out_of_stock: int
     availability_unknown: int
+    average_rating: float | None
     average_price: float | None
     min_price: float | None
     max_price: float | None
     top_rating: str | None
     top_rated_count: int
     top_rated_titles: list[str]
+
+
+class ScrapeJobResponse(BaseModel):
+    id: int
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    total_books: int
+    successful_books: int
+    failed_books: int
+    error_message: str | None
+
+
+class PriceHistoryResponse(BaseModel):
+    id: int
+    book_id: int
+    price: float
+    availability: str | None
+    recorded_at: datetime

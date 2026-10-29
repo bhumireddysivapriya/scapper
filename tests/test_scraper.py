@@ -9,6 +9,7 @@ from app.scraper import scrape_books
 def make_response(url: str, html: str):
     class Response:
         content = html.encode("utf-8")
+        text = html
         status_code = 200
 
         def __init__(self) -> None:
@@ -21,7 +22,74 @@ def make_response(url: str, html: str):
     return Response()
 
 
+def robots_response():
+    return make_response(
+        "https://books.toscrape.com/robots.txt",
+        "User-agent: *\nAllow: /\n",
+    )
+
+
 class ScrapeBooksTests(unittest.TestCase):
+    @patch("app.scraper.time.sleep")
+    @patch("app.scraper.requests.get")
+    def test_scrapes_all_pages_from_category_start_url(self, get, sleep):
+        category_url = (
+            "https://books.toscrape.com/catalogue/category/books/"
+            "contemporary_38/index.html"
+        )
+        first_page = """
+        <article class="product_pod">
+          <h3><a href="../../../book-one_1/index.html" title="Book One">Book One</a></h3>
+          <p class="price_color">£12.50</p><p class="availability">In stock</p>
+          <p class="star-rating Five"></p>
+        </article>
+        <li class="next"><a href="page-2.html">next</a></li>
+        """
+        second_page = """
+        <article class="product_pod">
+          <h3><a href="../../../book-two_2/index.html" title="Book Two">Book Two</a></h3>
+          <p class="price_color">£8.99</p><p class="availability">In stock</p>
+          <p class="star-rating Four"></p>
+        </article>
+        """
+        detail_page = """
+        <ul class="breadcrumb"><li><a>Home</a></li><li><a>Books</a></li>
+        <li><a>Contemporary</a></li></ul>
+        """
+        get.side_effect = [
+            robots_response(),
+            make_response(category_url, first_page),
+            make_response(
+                "https://books.toscrape.com/catalogue/book-one_1/index.html",
+                detail_page,
+            ),
+            make_response(
+                "https://books.toscrape.com/catalogue/category/books/"
+                "contemporary_38/page-2.html",
+                second_page,
+            ),
+            make_response(
+                "https://books.toscrape.com/catalogue/book-two_2/index.html",
+                detail_page,
+            ),
+        ]
+
+        books = scrape_books(limit=1000, start_url=category_url)
+
+        self.assertEqual([book["title"] for book in books], ["Book One", "Book Two"])
+        self.assertEqual([book["category"] for book in books], ["Contemporary"] * 2)
+        self.assertEqual(get.call_args_list[1].args[0], category_url)
+        self.assertEqual(
+            get.call_args_list[3].args[0],
+            "https://books.toscrape.com/catalogue/category/books/"
+            "contemporary_38/page-2.html",
+        )
+        self.assertEqual(sleep.call_count, 4)
+
+    def test_rejects_category_start_url_outside_source(self):
+        with self.assertRaises(requests.RequestException):
+            scrape_books(start_url="https://example.com/category")
+
     @patch("app.scraper.time.sleep")
     @patch("app.scraper.requests.get")
     def test_extracts_book_data_and_follows_pagination(self, get, sleep):
@@ -43,14 +111,33 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="star-rating Five"></p>
         </article>
         """
+        first_detail = """
+        <ul class="breadcrumb"><li><a>Home</a></li><li><a>Books</a></li>
+        <li><a>Travel</a></li></ul>
+        <div id="product_description"></div><p>A travel book.</p>
+        """
+        second_detail = """
+        <ul class="breadcrumb"><li><a>Home</a></li><li><a>Books</a></li>
+        <li><a>History</a></li></ul>
+        <div id="product_description"></div><p>A history book.</p>
+        """
         get.side_effect = [
+            robots_response(),
             make_response(
                 "https://books.toscrape.com/catalogue/page-1.html",
                 first_page,
             ),
             make_response(
+                "https://books.toscrape.com/catalogue/book-one_1/index.html",
+                first_detail,
+            ),
+            make_response(
                 "https://books.toscrape.com/catalogue/page-2.html",
                 second_page,
+            ),
+            make_response(
+                "https://books.toscrape.com/catalogue/book-two_2/index.html",
+                second_detail,
             ),
         ]
 
@@ -60,6 +147,8 @@ class ScrapeBooksTests(unittest.TestCase):
         self.assertEqual(books[0]["title"], "Book One")
         self.assertEqual(books[0]["price"], 12.5)
         self.assertEqual(books[0]["rating"], "Three")
+        self.assertEqual(books[0]["category"], "Travel")
+        self.assertEqual(books[0]["description"], "A travel book.")
         self.assertEqual(
             books[0]["url"],
             "https://books.toscrape.com/catalogue/book-one_1/index.html",
@@ -69,8 +158,9 @@ class ScrapeBooksTests(unittest.TestCase):
             "https://books.toscrape.com/media/cache/cover-one.jpg",
         )
         self.assertEqual(books[1]["title"], "Book Two")
-        self.assertEqual(get.call_count, 2)
-        sleep.assert_called_once()
+        self.assertEqual(books[1]["category"], "History")
+        self.assertEqual(get.call_count, 5)
+        self.assertEqual(sleep.call_count, 4)
 
     @patch("app.scraper.requests.get")
     def test_skips_card_with_invalid_price(self, get):
@@ -80,10 +170,10 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="price_color">not a price</p>
         </article>
         """
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            html,
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response("https://books.toscrape.com/catalogue/page-1.html", html),
+        ]
 
         self.assertEqual(scrape_books(), [])
 
@@ -95,10 +185,10 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="price_color">£NaN</p>
         </article>
         """
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            html,
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response("https://books.toscrape.com/catalogue/page-1.html", html),
+        ]
         self.assertEqual(scrape_books(limit=1), [])
 
     @patch("app.scraper.requests.get")
@@ -109,10 +199,14 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="price_color">£51.77</p>
         </article>
         """
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            html,
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response("https://books.toscrape.com/catalogue/page-1.html", html),
+            make_response(
+                "https://books.toscrape.com/catalogue/book_1/index.html",
+                "<html><body>No optional details.</body></html>",
+            ),
+        ]
 
         books = scrape_books(limit=1)
 
@@ -122,17 +216,22 @@ class ScrapeBooksTests(unittest.TestCase):
         self.assertEqual(books[0]["rating"], "Unknown")
         self.assertIsNone(books[0]["image_url"])
 
+    @patch("app.scraper.time.sleep")
     @patch("app.scraper.requests.get", side_effect=requests.Timeout("timed out"))
-    def test_propagates_request_errors_for_api_handling(self, get):
+    def test_propagates_request_errors_for_api_handling(self, get, sleep):
         with self.assertRaises(requests.Timeout):
             scrape_books(limit=1)
+        self.assertEqual(get.call_count, 3)
 
     @patch("app.scraper.requests.get")
     def test_malformed_html_returns_empty_results(self, get):
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            "<html><body>Unexpected but valid HTML</body></html>",
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response(
+                "https://books.toscrape.com/catalogue/page-1.html",
+                "<html><body>Unexpected but valid HTML</body></html>",
+            ),
+        ]
         self.assertEqual(scrape_books(limit=1), [])
 
     @patch("app.scraper.requests.get")
@@ -143,10 +242,10 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="price_color">£5.00</p>
         </article>
         """
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            html,
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response("https://books.toscrape.com/catalogue/page-1.html", html),
+        ]
         self.assertEqual(scrape_books(limit=1), [])
 
     @patch("app.scraper.requests.get")
@@ -157,10 +256,10 @@ class ScrapeBooksTests(unittest.TestCase):
           <p class="price_color">£5.00</p>
         </article>
         """
-        get.return_value = make_response(
-            "https://books.toscrape.com/catalogue/page-1.html",
-            html,
-        )
+        get.side_effect = [
+            robots_response(),
+            make_response("https://books.toscrape.com/catalogue/page-1.html", html),
+        ]
         self.assertEqual(scrape_books(limit=1), [])
 
     @patch("app.scraper.requests.get")
@@ -170,13 +269,20 @@ class ScrapeBooksTests(unittest.TestCase):
             "",
         )
         response.status_code = 302
-        get.return_value = response
+        get.side_effect = [robots_response(), response]
         with self.assertRaises(requests.RequestException):
             scrape_books(limit=1)
-        get.assert_called_once_with(
+        self.assertEqual(
+            get.call_args_list[1].args[0],
             "https://books.toscrape.com/catalogue/page-1.html",
-            timeout=20,
-            allow_redirects=False,
+        )
+        self.assertEqual(
+            get.call_args_list[1].kwargs,
+            {
+                "timeout": 20,
+                "allow_redirects": False,
+                "headers": {"User-Agent": "BookShelfScraper/1.0"},
+            },
         )
 
 

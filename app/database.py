@@ -47,16 +47,39 @@ class Base(DeclarativeBase):
 def initialize_database(target_engine: Engine = engine) -> None:
     from app.models import Product
 
+    existing_tables = set(inspect(target_engine).get_table_names())
+    if "products" in existing_tables:
+        existing_columns = {
+            column["name"] for column in inspect(target_engine).get_columns("products")
+        }
+        additive_columns = {
+            "image_url": "VARCHAR(2048)",
+            "category": "VARCHAR(200)",
+            "description": "TEXT",
+            "source": "VARCHAR(100) NOT NULL DEFAULT 'books.toscrape.com'",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+            "last_scraped_at": "DATETIME",
+        }
+        with target_engine.begin() as connection:
+            for name, definition in additive_columns.items():
+                if name not in existing_columns:
+                    connection.execute(
+                        text(f"ALTER TABLE products ADD COLUMN {name} {definition}")
+                    )
+            if "created_at" not in existing_columns:
+                connection.execute(
+                    text("UPDATE products SET created_at = CURRENT_TIMESTAMP")
+                )
+            if "updated_at" not in existing_columns:
+                connection.execute(
+                    text("UPDATE products SET updated_at = CURRENT_TIMESTAMP")
+                )
+
     Base.metadata.create_all(bind=target_engine)
 
     with target_engine.begin() as connection:
         inspector = inspect(connection)
-        if "image_url" not in {
-            column["name"] for column in inspector.get_columns("products")
-        }:
-            connection.execute(
-                text("ALTER TABLE products ADD COLUMN image_url VARCHAR(2048)")
-            )
         if "books" in inspector.get_table_names():
             legacy_books = Table("books", MetaData(), autoload_with=connection)
             if target_engine.dialect.name == "sqlite":
